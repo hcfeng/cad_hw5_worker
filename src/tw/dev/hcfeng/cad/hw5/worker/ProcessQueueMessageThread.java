@@ -2,6 +2,7 @@ package tw.dev.hcfeng.cad.hw5.worker;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
@@ -13,7 +14,11 @@ import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.sqs.AmazonSQS;
 import com.amazonaws.services.sqs.AmazonSQSClient;
+import com.amazonaws.services.sqs.model.ChangeMessageVisibilityRequest;
+import com.amazonaws.services.sqs.model.DeleteMessageRequest;
+import com.amazonaws.services.sqs.model.Message;
 import com.amazonaws.services.sqs.model.ReceiveMessageRequest;
+import com.amazonaws.services.sqs.model.ReceiveMessageResult;
 import com.amazonaws.services.sqs.model.SendMessageRequest;
 import com.amazonaws.services.sqs.model.SendMessageResult;
 
@@ -26,40 +31,44 @@ public class ProcessQueueMessageThread extends Thread {
 	private static String LOG_FILE_NAME_SIFFIX = ".log";
 	private static AmazonSQS sqs = null;
 	private static AmazonS3 s3 = null;
+	private static String machineId = "1";
 
 	/**
 	 * @param args
 	 */
-	public static void main(String[] args) {
+	public ProcessQueueMessageThread(String mId) {
 		try {
+			machineId = mId;
 			PropertiesCredentials pCredentials = new PropertiesCredentials(
 					ProcessQueueMessageThread.class
 							.getResourceAsStream("AwsCredentials.properties"));
 			sqs = new AmazonSQSClient(pCredentials);
 			s3 = new AmazonS3Client(pCredentials);
-			processMessage();
-
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
+					
+		} catch (IOException e) {			
 			e.printStackTrace();
 		}
 
 	}
 
 	public void run() {
+		System.out.println(machineId+"號機啟動..");
 		while (true) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException exception) {
-				// do nothing
+			processMessage();
+			try {				
+				//設定為5秒偵測一次
+				Thread.sleep(5000);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
 			}
 		}
 	}
 
-	private static int getMax(int[] numbers) {
-		int maxNumber = numbers[0];
+	private static int getMax(String[] numbers) {
+		int maxNumber = Integer.parseInt(numbers[0]);
 		int idx = 0;
-		for (int n : numbers) {
+		for (String nStr : numbers) {
+			int n = Integer.parseInt(nStr);
 			if (++idx == 1)
 				continue;
 			if (n > maxNumber) {
@@ -69,10 +78,11 @@ public class ProcessQueueMessageThread extends Thread {
 		return maxNumber;
 	}
 
-	private static int getMin(int[] numbers) {
-		int minNumber = numbers[0];
+	private static int getMin(String[] numbers) {
+		int minNumber = Integer.parseInt(numbers[0]);
 		int idx = 0;
-		for (int n : numbers) {
+		for (String nStr : numbers) {
+			int n = Integer.parseInt(nStr);
 			if (++idx == 1)
 				continue;
 			if (n < minNumber) {
@@ -82,10 +92,11 @@ public class ProcessQueueMessageThread extends Thread {
 		return minNumber;
 	}
 
-	private static long getProduct(int[] numbers) {
-		long productNumber = (long) numbers[0];
+	private static long getProduct(String[] numbers) {
+		long productNumber = Long.parseLong(numbers[0]);
 		int idx = 0;
-		for (int n : numbers) {
+		for (String nStr : numbers) {
+			int n = Integer.parseInt(nStr);
 			if (++idx == 1)
 				continue;
 			productNumber *= n;
@@ -93,10 +104,11 @@ public class ProcessQueueMessageThread extends Thread {
 		return productNumber;
 	}
 
-	private static long getSum(int[] numbers) {
-		long sumNumber = numbers[0];
+	private static long getSum(String[] numbers) {
+		long sumNumber = Long.parseLong(numbers[0]);
 		int idx = 0;
-		for (int n : numbers) {
+		for (String nStr : numbers) {
+			int n = Integer.parseInt(nStr);
 			if (++idx == 1)
 				continue;
 			sumNumber += n;
@@ -104,10 +116,11 @@ public class ProcessQueueMessageThread extends Thread {
 		return sumNumber;
 	}
 
-	private static long getSumOfSquares(int[] numbers) {
-		long sosNumber = (long) Math.pow(numbers[0], 2);
+	private static long getSumOfSquares(String[] numbers) {
+		long sosNumber = (long) Math.pow(Long.parseLong(numbers[0]), 2);
 		int idx = 0;
-		for (int n : numbers) {
+		for (String nStr : numbers) {
+			int n = Integer.parseInt(nStr);
 			if (++idx == 1)
 				continue;
 			sosNumber += Math.pow(n, 2);
@@ -116,54 +129,83 @@ public class ProcessQueueMessageThread extends Thread {
 	}
 
 	private static void processMessage() {
-		ReceiveMessageRequest receiveMessageRequest = new ReceiveMessageRequest(
-				INBOX_URL);
-		int[] num = { 11, 3, 99, 34, 20, 4, 5, 100 };		
-//		List<Message> messages = sqs.receiveMessage(receiveMessageRequest)
-//				.getMessages();
-//		for (Message message : messages) {			
-//			for (Entry<String, String> entry : message.getAttributes()
-//					.entrySet()) {
-//				System.out.println("  Attribute");
-//				System.out.println("    Name:  " + entry.getKey());
-//				System.out.println("    Value: " + entry.getValue());
-//			}
-//		}
-		String responseMsg = "";
+		ReceiveMessageRequest rmRequest = new ReceiveMessageRequest(INBOX_URL).withMaxNumberOfMessages(1);
+		ReceiveMessageResult rmResult = sqs.receiveMessage(rmRequest);
+		
+		//有訊息才做
+		if (rmResult.getMessages().size()>0) {
+			for (Message mesg : rmResult.getMessages()) {								
+				// 更改逾時時間
+				ChangeMessageVisibilityRequest cvRequest = new ChangeMessageVisibilityRequest(
+						rmRequest.getQueueUrl(), mesg.getReceiptHandle(), 30);
+				sqs.changeMessageVisibility(cvRequest);
+					
+				String logContent = "";
+				logContent += "Source ->Inbox: \r\n";
+				logContent += "\tMessage ID: "+mesg.getMessageId() +"\r\n";
+				logContent += "\tMessage Body: " + mesg.getBody() +"\r\n\r\n";
+																		
+				String responseMsg = calculateMessage(mesg.getBody());
+				
+				//存到outbox
+				SendMessageResult smResult = sqs.sendMessage(new SendMessageRequest(
+						OUTBOX_URL, responseMsg));		
+				
+				logContent += "Result->Outbox: \r\n";
+				logContent += "\tMessage ID: "+smResult.getMessageId() +"\r\n";
+				logContent += "\tMessage Body: " + responseMsg +"\r\n\r\n";
+											
+				// 刪除訊息
+				DeleteMessageRequest dmRequest = new DeleteMessageRequest(
+						rmRequest.getQueueUrl(), mesg.getReceiptHandle());
+				sqs.deleteMessage(dmRequest);
+				
+				logContent += "Process: \r\n ";
+				logContent += "\tTime: "+new Date()+"\r\n";
+				logContent += "\tInstance: Woker-"+machineId+"號機\r\n";
+				
+				// 記錄log至s3
+				logToS3(logContent);
+			}
+		}		
+	}
+
+	private static String calculateMessage(String msgBody) {
+		String[] num = msgBody.replace(" ","").split(",");
+		String responseMsg = "";		
+		responseMsg    = "[ "+msgBody +" ] 由" +machineId+"號機處理，結果為: " ;
 		responseMsg += "max: " + getMax(num);
 		responseMsg += ", min: " + getMin(num);
 		responseMsg += ", product: " + getProduct(num);
 		responseMsg += ", sum: " + getSum(num);
 		responseMsg += ", sum of squares: " + getSumOfSquares(num);
-		SendMessageResult rmResult = sqs.sendMessage(new SendMessageRequest(OUTBOX_URL, responseMsg));
-//		rmResult.getMessageId();
-		logToS3();
+		return responseMsg;		
 	}
 
-	private static void logToS3() {
+	private static void logToS3(String logContent) {
 		try {
 
 			if (s3.doesBucketExist(LOG_BUCKET_NAME) == false) {
 				s3.createBucket(LOG_BUCKET_NAME);
 			}
-			File logFile = createLogFile();
+			File logFile = createLogFile(logContent);			
 			PutObjectRequest poRequest = new PutObjectRequest(LOG_BUCKET_NAME,
 					logFile.getName(), logFile);
 			s3.putObject(poRequest);
 
 		} catch (IOException e) {
-			// do nothing
+			e.printStackTrace();
 		}
 
 	}
 
-	private static File createLogFile() throws IOException {
+	private static File createLogFile(String logContent) throws IOException {
 		File file = File.createTempFile(LOG_FILE_NAME_PREFIX,
 				LOG_FILE_NAME_SIFFIX);
 		file.deleteOnExit();
 
 		Writer writer = new OutputStreamWriter(new FileOutputStream(file));
-		writer.append(new Date() + "");
+		writer.append(logContent);
 		writer.close();
 
 		return file;
