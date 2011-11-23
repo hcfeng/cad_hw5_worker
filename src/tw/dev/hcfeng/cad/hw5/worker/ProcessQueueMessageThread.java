@@ -2,10 +2,12 @@ package tw.dev.hcfeng.cad.hw5.worker;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 
 import com.amazonaws.auth.PropertiesCredentials;
@@ -44,20 +46,19 @@ public class ProcessQueueMessageThread extends Thread {
 							.getResourceAsStream("AwsCredentials.properties"));
 			sqs = new AmazonSQSClient(pCredentials);
 			s3 = new AmazonS3Client(pCredentials);
-					
-		} catch (IOException e) {			
+
+		} catch (IOException e) {
 			e.printStackTrace();
 		}
 
 	}
 
 	public void run() {
-		System.out.println(machineId+"號機啟動..");
 		while (true) {
 			processMessage();
-			try {				
-				//設定為5秒偵測一次
-				Thread.sleep(5000);
+			try {
+				// 設定為15秒偵測一次
+				Thread.sleep(15000);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
@@ -129,57 +130,74 @@ public class ProcessQueueMessageThread extends Thread {
 	}
 
 	private static void processMessage() {
-		ReceiveMessageRequest rmRequest = new ReceiveMessageRequest(INBOX_URL).withMaxNumberOfMessages(1);
+		ReceiveMessageRequest rmRequest = new ReceiveMessageRequest(INBOX_URL)
+				.withMaxNumberOfMessages(1);
 		ReceiveMessageResult rmResult = sqs.receiveMessage(rmRequest);
-		
-		//有訊息才做
-		if (rmResult.getMessages().size()>0) {
-			for (Message mesg : rmResult.getMessages()) {								
+
+		// 有訊息才做
+		if (rmResult.getMessages().size() > 0) {
+			for (Message mesg : rmResult.getMessages()) {
 				// 更改逾時時間
 				ChangeMessageVisibilityRequest cvRequest = new ChangeMessageVisibilityRequest(
 						rmRequest.getQueueUrl(), mesg.getReceiptHandle(), 30);
 				sqs.changeMessageVisibility(cvRequest);
-					
+
 				String logContent = "";
 				logContent += "Source ->Inbox: \r\n";
-				logContent += "\tMessage ID: "+mesg.getMessageId() +"\r\n";
-				logContent += "\tMessage Body: " + mesg.getBody() +"\r\n\r\n";
-																		
+				logContent += "\tMessage ID: " + mesg.getMessageId() + "\r\n";
+				logContent += "\tMessage Body: " + mesg.getBody() + "\r\n\r\n";
+
 				String responseMsg = calculateMessage(mesg.getBody());
-				
-				//存到outbox
-				SendMessageResult smResult = sqs.sendMessage(new SendMessageRequest(
-						OUTBOX_URL, responseMsg));		
-				
+
+				// 存到outbox
+				SendMessageResult smResult = sqs
+						.sendMessage(new SendMessageRequest(OUTBOX_URL,
+								responseMsg));
+
 				logContent += "Result->Outbox: \r\n";
-				logContent += "\tMessage ID: "+smResult.getMessageId() +"\r\n";
-				logContent += "\tMessage Body: " + responseMsg +"\r\n\r\n";
-											
+				logContent += "\tMessage ID: " + smResult.getMessageId()
+						+ "\r\n";
+				logContent += "\tMessage Body: " + responseMsg + "\r\n\r\n";
+
 				// 刪除訊息
 				DeleteMessageRequest dmRequest = new DeleteMessageRequest(
 						rmRequest.getQueueUrl(), mesg.getReceiptHandle());
 				sqs.deleteMessage(dmRequest);
-				
+
 				logContent += "Process: \r\n ";
-				logContent += "\tTime: "+new Date()+"\r\n";
-				logContent += "\tInstance: Woker-"+machineId+"號機\r\n";
-				
+				logContent += "\tTime: " + new Date() + "\r\n";
+				logContent += "\tInstance: Woker-" + machineId + "號機("+getLocalIpAddress()+")\r\n";
+
 				// 記錄log至s3
 				logToS3(logContent);
 			}
+		}
+	}
+
+	private static String getLocalIpAddress() {
+		InetAddress inetAddress = null;
+		String ipAddress = "unknow";
+		try {
+			inetAddress = InetAddress.getLocalHost();
+			ipAddress = inetAddress.getHostAddress();
+		} catch (UnknownHostException e) {
+			e.printStackTrace();
 		}		
+		return ipAddress;
 	}
 
 	private static String calculateMessage(String msgBody) {
-		String[] num = msgBody.replace(" ","").split(",");
-		String responseMsg = "";		
-		responseMsg    = "[ "+msgBody +" ] 由" +machineId+"號機處理，結果為: " ;
-		responseMsg += "max: " + getMax(num);
-		responseMsg += ", min: " + getMin(num);
-		responseMsg += ", product: " + getProduct(num);
-		responseMsg += ", sum: " + getSum(num);
-		responseMsg += ", sum of squares: " + getSumOfSquares(num);
-		return responseMsg;		
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
+		String[] num = msgBody.replace(" ", "").split(",");
+		String responseMsg = "";
+		responseMsg = "[" + sdf.format(new Date()) + "]  " + machineId + "號機("
+				+ getLocalIpAddress() + ")處理了: " + msgBody;
+		responseMsg += "==> max:" + getMax(num);
+		responseMsg += ", min:" + getMin(num);
+		responseMsg += ", product:" + getProduct(num);
+		responseMsg += ", sum:" + getSum(num);
+		responseMsg += ", sum of squares:" + getSumOfSquares(num);
+		return responseMsg;
 	}
 
 	private static void logToS3(String logContent) {
@@ -188,7 +206,7 @@ public class ProcessQueueMessageThread extends Thread {
 			if (s3.doesBucketExist(LOG_BUCKET_NAME) == false) {
 				s3.createBucket(LOG_BUCKET_NAME);
 			}
-			File logFile = createLogFile(logContent);			
+			File logFile = createLogFile(logContent);
 			PutObjectRequest poRequest = new PutObjectRequest(LOG_BUCKET_NAME,
 					logFile.getName(), logFile);
 			s3.putObject(poRequest);
