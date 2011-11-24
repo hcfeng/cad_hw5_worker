@@ -9,11 +9,14 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.TimeZone;
 
 import com.amazonaws.auth.PropertiesCredentials;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.sqs.AmazonSQS;
 import com.amazonaws.services.sqs.AmazonSQSClient;
 import com.amazonaws.services.sqs.model.ChangeMessageVisibilityRequest;
@@ -188,6 +191,7 @@ public class ProcessQueueMessageThread extends Thread {
 
 	private static String calculateMessage(String msgBody) {
 		SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
+		sdf.setTimeZone(TimeZone.getTimeZone("GMT+8"));
 		String[] num = msgBody.replace(" ", "").split(",");
 		String responseMsg = "";
 		responseMsg = "[" + sdf.format(new Date()) + "]  " + machineId + "號機("
@@ -209,7 +213,7 @@ public class ProcessQueueMessageThread extends Thread {
 			File logFile = createLogFile(logContent);
 			PutObjectRequest poRequest = new PutObjectRequest(LOG_BUCKET_NAME,
 					logFile.getName(), logFile);
-			s3.putObject(poRequest);
+			s3.putObject(poRequest);				
 
 		} catch (IOException e) {
 			e.printStackTrace();
